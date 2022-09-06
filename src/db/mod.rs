@@ -1,0 +1,143 @@
+pub mod models;
+pub mod schema;
+
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
+
+use diesel::prelude::*;
+use once_cell::sync::OnceCell;
+
+pub struct DB {
+    internal: OnceCell<Arc<Mutex<SqliteConnection>>>,
+}
+
+impl DB {
+    pub const fn empty() -> Self {
+        DB {
+            internal: OnceCell::new(),
+        }
+    }
+
+    pub fn init<P: AsRef<Path>>(&self, path: P) -> Result<(), diesel::ConnectionError> {
+        if self
+            .internal
+            .set(Arc::new(Mutex::new(SqliteConnection::establish(
+                &path.as_ref().display().to_string(),
+            )?)))
+            .is_err()
+        {
+            panic!("Init can be called only once")
+        }
+
+        Ok(())
+    }
+
+    /// Returns underlying DB instance guarded with Mutex.
+    ///
+    /// # Panics
+    ///
+    /// Panics if db is not initialized of poisoned
+    pub fn db(&self) -> std::sync::MutexGuard<SqliteConnection> {
+        self.internal
+            .get()
+            .expect("DB should be initialized by now")
+            .lock()
+            .expect("DB Mutex poisoned")
+    }
+
+    pub fn query<S: Into<String>>(&self, q: S) -> Result<usize, diesel::result::Error> {
+        diesel::sql_query(q).execute(&mut (*self.db()))
+    }
+
+    /// Create tables if they do not exists
+    pub fn create(&self) -> Result<(), diesel::result::Error> {
+        let db = &mut (*self.db());
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS pull (
+                repo TEXT NOT NULL,
+                num INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                merge_sha TEXT,
+                title TEXT,
+                body TEXT,
+                head_sha TEXT,
+                head_ref TEXT,
+                base_ref TEXT,
+                assignee TEXT,
+                approved_by TEXT,
+                priority INTEGER,
+                try_ INTEGER,
+                rollup INTEGER,
+                squash INTEGER,
+                delegate TEXT,
+                UNIQUE (repo, num)
+            )",
+        )
+        .execute(db)?;
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS build_res (
+                repo TEXT NOT NULL,
+                num INTEGER NOT NULL,
+                builder TEXT NOT NULL,
+                res INTEGER,
+                url TEXT NOT NULL,
+                merge_sha TEXT NOT NULL,
+                UNIQUE (repo, num, builder)
+            )",
+        )
+        .execute(db)?;
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS mergeable (
+                repo TEXT NOT NULL,
+                num INTEGER NOT NULL,
+                mergeable INTEGER NOT NULL,
+                UNIQUE (repo, num)
+            )",
+        )
+        .execute(db)?;
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS repos (
+                repo TEXT NOT NULL,
+                treeclosed INTEGER NOT NULL,
+                treeclosed_src TEXT,
+                UNIQUE (repo)
+            )",
+        )
+        .execute(db)?;
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS retry_log (
+                repo TEXT NOT NULL,
+                num INTEGER NOT NULL,
+                time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                src TEXT NOT NULL,
+                msg TEXT NOT NULL
+            )",
+        )
+        .execute(db)?;
+        diesel::sql_query(
+            "CREATE INDEX IF NOT EXISTS retry_log_time_index ON retry_log
+            (repo, time DESC)",
+        )
+        .execute(db)?;
+
+        // manual DB migration :/
+
+        if matches!(
+            diesel::sql_query("SELECT treeclosed_src FROM repos LIMIT 0").execute(db),
+            Err(diesel::result::Error::DatabaseError(..))
+        ) {
+            diesel::sql_query("ALTER TABLE repos ADD COLUMN treeclosed_src TEXT").execute(db)?;
+        }
+
+        if matches!(
+            diesel::sql_query("SELECT squash FROM pull LIMIT 0").execute(db),
+            Err(diesel::result::Error::DatabaseError(..))
+        ) {
+            diesel::sql_query("ALTER TABLE pull ADD COLUMN squash INT").execute(db)?;
+        }
+
+        Ok(())
+    }
+}
