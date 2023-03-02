@@ -1,13 +1,13 @@
 pub mod models;
-pub mod schema;
+//pub mod schema;
+use std::path::Path;
+use std::sync::Arc;
 
-use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-};
-
-use diesel::prelude::*;
+pub use models::*;
 use once_cell::sync::OnceCell;
+pub use sqlx::query_as;
+use sqlx::{query, Connection, Error, SqliteConnection};
+use tokio::sync::Mutex;
 
 pub struct DB {
     internal: OnceCell<Arc<Mutex<SqliteConnection>>>,
@@ -20,12 +20,12 @@ impl DB {
         }
     }
 
-    pub fn init<P: AsRef<Path>>(&self, path: P) -> Result<(), diesel::ConnectionError> {
+    pub async fn init<P: AsRef<Path>>(&self, path: P) -> Result<(), sqlx::Error> {
         if self
             .internal
-            .set(Arc::new(Mutex::new(SqliteConnection::establish(
-                &path.as_ref().display().to_string(),
-            )?)))
+            .set(Arc::new(Mutex::new(
+                SqliteConnection::connect(&path.as_ref().display().to_string()).await?,
+            )))
             .is_err()
         {
             panic!("Init can be called only once")
@@ -39,22 +39,25 @@ impl DB {
     /// # Panics
     ///
     /// Panics if db is not initialized of poisoned
-    pub fn db(&self) -> std::sync::MutexGuard<SqliteConnection> {
+    pub async fn db(&self) -> tokio::sync::MutexGuard<SqliteConnection> {
         self.internal
             .get()
             .expect("DB should be initialized by now")
             .lock()
-            .expect("DB Mutex poisoned")
+            .await
     }
 
-    pub fn query<S: Into<String>>(&self, q: S) -> Result<usize, diesel::result::Error> {
-        diesel::sql_query(q).execute(&mut (*self.db()))
+    pub async fn query<S: AsRef<str>>(
+        &self,
+        q: S,
+    ) -> Result<sqlx::sqlite::SqliteQueryResult, Error> {
+        query(q.as_ref()).execute(&mut (*self.db().await)).await
     }
 
     /// Create tables if they do not exists
-    pub fn create(&self) -> Result<(), diesel::result::Error> {
-        let db = &mut (*self.db());
-        diesel::sql_query(
+    pub async fn create(&self) -> Result<(), Error> {
+        let db = &mut (*self.db().await);
+        query(
             "CREATE TABLE IF NOT EXISTS pull (
                 repo TEXT NOT NULL,
                 num INTEGER NOT NULL,
@@ -75,8 +78,9 @@ impl DB {
                 UNIQUE (repo, num)
             )",
         )
-        .execute(db)?;
-        diesel::sql_query(
+        .execute(&mut *db)
+        .await?;
+        query(
             "CREATE TABLE IF NOT EXISTS build_res (
                 repo TEXT NOT NULL,
                 num INTEGER NOT NULL,
@@ -87,8 +91,9 @@ impl DB {
                 UNIQUE (repo, num, builder)
             )",
         )
-        .execute(db)?;
-        diesel::sql_query(
+        .execute(&mut *db)
+        .await?;
+        query(
             "CREATE TABLE IF NOT EXISTS mergeable (
                 repo TEXT NOT NULL,
                 num INTEGER NOT NULL,
@@ -96,8 +101,9 @@ impl DB {
                 UNIQUE (repo, num)
             )",
         )
-        .execute(db)?;
-        diesel::sql_query(
+        .execute(&mut *db)
+        .await?;
+        query(
             "CREATE TABLE IF NOT EXISTS repos (
                 repo TEXT NOT NULL,
                 treeclosed INTEGER NOT NULL,
@@ -105,8 +111,9 @@ impl DB {
                 UNIQUE (repo)
             )",
         )
-        .execute(db)?;
-        diesel::sql_query(
+        .execute(&mut *db)
+        .await?;
+        query(
             "CREATE TABLE IF NOT EXISTS retry_log (
                 repo TEXT NOT NULL,
                 num INTEGER NOT NULL,
@@ -115,27 +122,37 @@ impl DB {
                 msg TEXT NOT NULL
             )",
         )
-        .execute(db)?;
-        diesel::sql_query(
+        .execute(&mut *db)
+        .await?;
+        query(
             "CREATE INDEX IF NOT EXISTS retry_log_time_index ON retry_log
             (repo, time DESC)",
         )
-        .execute(db)?;
+        .execute(&mut *db)
+        .await?;
 
         // manual DB migration :/
 
         if matches!(
-            diesel::sql_query("SELECT treeclosed_src FROM repos LIMIT 0").execute(db),
-            Err(diesel::result::Error::DatabaseError(..))
+            query("SELECT treeclosed_src FROM repos LIMIT 0")
+                .execute(&mut *db)
+                .await,
+            Err(Error::Database(_))
         ) {
-            diesel::sql_query("ALTER TABLE repos ADD COLUMN treeclosed_src TEXT").execute(db)?;
+            query("ALTER TABLE repos ADD COLUMN treeclosed_src TEXT")
+                .execute(&mut *db)
+                .await?;
         }
 
         if matches!(
-            diesel::sql_query("SELECT squash FROM pull LIMIT 0").execute(db),
-            Err(diesel::result::Error::DatabaseError(..))
+            query("SELECT squash FROM pull LIMIT 0")
+                .execute(&mut *db)
+                .await,
+            Err(Error::Database(_))
         ) {
-            diesel::sql_query("ALTER TABLE pull ADD COLUMN squash INT").execute(db)?;
+            query("ALTER TABLE pull ADD COLUMN squash INT")
+                .execute(&mut *db)
+                .await?;
         }
 
         Ok(())

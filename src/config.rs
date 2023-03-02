@@ -1,8 +1,6 @@
-use std::{
-    collections::HashMap,
-    net::Ipv4Addr,
-    path::{Path, PathBuf},
-};
+use std::collections::HashMap;
+use std::net::Ipv4Addr;
+use std::path::PathBuf;
 
 use regex::Regex;
 use serde::Deserialize;
@@ -110,9 +108,8 @@ pub struct Github {
 /// GitHub username
 pub type User = String;
 
-/// returns 10h in seconds
-const fn ten_hours() -> i32 {
-    10 * 60 * 60
+const fn timeout() -> i32 {
+    crate::hardcoded::DEFAULT_TEST_TIMEOUT
 }
 
 /// The database homu uses
@@ -153,7 +150,7 @@ pub struct Repo {
     /// Maximum test duration allowed for testing a PR in this repository.
     ///
     /// Default to 10 hours.
-    #[serde(default = "ten_hours")]
+    #[serde(default = "timeout")]
     timeout: i32,
     /// Branch names
     #[serde(default)]
@@ -274,7 +271,7 @@ pub struct TestOnFork {
 /// This function replaces ${VAR_PLACEHOLDER} with real env values
 fn pre_process_config(s: &str) -> Result<String, Box<dyn std::error::Error>> {
     let mut res = s.to_owned();
-    for m in Regex::new(r"\$\{([a-zA-Z_]+)\}").unwrap().find_iter(s) {
+    for m in crate::hardcoded::VARIABLES_RE.find_iter(s) {
         let var = &m.as_str()[2..m.as_str().len() - 1];
         println!("{}", var);
         if res.contains(m.as_str()) {

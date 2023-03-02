@@ -1,12 +1,8 @@
-use std::sync::{Arc, RwLock};
-
 use db::DB;
-use diesel::QueryDsl;
-use once_cell::sync::OnceCell;
-
 mod cli;
 mod config;
 mod db;
+mod hardcoded;
 
 static DB: DB = DB::empty();
 
@@ -46,16 +42,15 @@ impl Default for Repository {
 }
 
 impl Repository {
-    fn new(gh: String, repo_label: String) -> Self {
-        use db::schema::repos::dsl as repos;
-        use diesel::prelude::*;
-
-        let (treeclosed, treeclosed_src) = if let Ok(x) = repos::repos
-            .filter(repos::repo.eq(&repo_label))
-            .select((repos::treeclosed, repos::treeclosed_src))
-            .first::<(i32, Option<String>)>(&mut *DB.db())
+    async fn new(gh: String, repo_label: String) -> Self {
+        let (treeclosed, treeclosed_src) = if let Ok(repo) = sqlx::query_as::<_, db::Repo>(
+            "SELECT treeclosed, treeclosed_src FROM repos WHERE repo = ?",
+        )
+        .bind(&repo_label)
+        .fetch_one(&mut *DB.db().await)
+        .await
         {
-            x
+            (repo.treeclosed, repo.treeclosed_src)
         } else {
             (-1, None)
         };
@@ -69,27 +64,58 @@ impl Repository {
         }
     }
 
-    fn update_treeclosed(&mut self, value: i32, src: String) {
-        use db::schema::repos::dsl as repos;
-        use diesel::prelude::*;
-
+    async fn update_treeclosed(&mut self, value: i32, src: String) {
         self.treeclosed = value;
         self.treeclosed_src = Some(src);
 
-        let db = &mut *DB.db();
+        let db = &mut *DB.db().await;
 
-        diesel::delete(repos::repos.filter(repos::repo.eq(&self.repo_label)))
-            .execute(db)
+        sqlx::query("DELETE FROM repos where repo = ?")
+            .bind(&self.repo_label)
+            .execute(&mut *db)
+            .await
             .unwrap();
 
         if value > 0 {
-            diesel::insert_into(repos::repos)
-                .values((self.repo_label, value, src))
-                .execute(db)
-                .unwrap();
+            sqlx::query(
+                "INSERT INTO repos (repo, treeclosed, treeclosed_src)
+            VALUES (?, ?, ?)",
+            )
+            .bind(&self.repo_label)
+            .bind(value)
+            .bind(self.treeclosed_src.as_ref().unwrap())
+            .execute(&mut *db)
+            .await
+            .unwrap();
         }
     }
 }
+
+enum AuthState {
+    // Higher is more privileged
+    Reviewer = 3,
+    Try = 2,
+    None = 1,
+}
+
+#[derive(Debug)]
+enum LabelEvent {
+    Approved,
+    Rejected,
+    Conflict,
+    Succeed,
+    Failed,
+    Try,
+    TrySucceed,
+    TryFailed,
+    Exempted,
+    TimedOut,
+    Interrupted,
+    Pushed,
+}
+
+pub const PORTAL_TURRET_DIALOG: [&str; 3] = ["Target acquired", "Activated", "There you are"];
+pub const PORTAL_TURRET_IMAGE: &str = "https://cloud.githubusercontent.com/assets/1617736/22222924/c07b2a1c-e16d-11e6-91b3-ac659550585c.png";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // parse arguments
@@ -124,9 +150,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 //cfg.git.email = Some(octa);
             }
 
-            DB.init(cfg.db.file)?;
+            DB.init(cfg.db.file).await?;
 
-            DB.create()?;
+            DB.create().await?;
 
             Ok::<_, Box<dyn std::error::Error>>(())
         })

@@ -1,62 +1,63 @@
-use diesel::prelude::*;
-use diesel::sql_types::Timestamp;
-use diesel::sqlite::Sqlite;
-
-// Rust type aliases
+// These type aliases are here to for models to be
+// as close as possible to CREATE TABLE queries
 type Nullable<T> = Option<T>;
 type Text = String;
 type Integer = i32;
+type DateTime = time::PrimitiveDateTime;
 
-#[derive(Queryable)]
+/// One row in `pull` table
+#[derive(sqlx::FromRow)]
 pub struct Pull {
-    repo: Text,
-    num: Integer,
-    status: Text,
-    merge_sha: Nullable<Text>,
-    body: Nullable<Text>,
-    head_sha: Nullable<Text>,
-    head_ref: Nullable<Text>,
-    base_ref: Nullable<Text>,
-    assignee: Nullable<Text>,
-    approved_by: Nullable<Text>,
-    priority: Nullable<Integer>,
-    try_: Nullable<Integer>,
-    rollup: Nullable<Integer>,
-    squash: Nullable<Integer>,
-    delegate: Nullable<Text>,
+    pub repo: Text,
+    pub num: Integer,
+    pub status: Text,
+    pub merge_sha: Nullable<Text>,
+    pub body: Nullable<Text>,
+    pub head_sha: Nullable<Text>,
+    pub head_ref: Nullable<Text>,
+    pub base_ref: Nullable<Text>,
+    pub assignee: Nullable<Text>,
+    pub approved_by: Nullable<Text>,
+    pub priority: Nullable<Integer>,
+    pub try_: Nullable<Integer>,
+    pub rollup: Nullable<Integer>,
+    pub squash: Nullable<Integer>,
+    pub delegate: Nullable<Text>,
 }
 
-#[derive(Queryable)]
-pub struct build_res {
-    repo: Text,
-    num: Integer,
-    builder: Text,
-    res: Nullable<Integer>,
-    url: Text,
-    merge_sha: Text,
+/// One row in `build_res` table
+#[derive(sqlx::FromRow)]
+pub struct BuildRes {
+    pub repo: Text,
+    pub num: Integer,
+    pub builder: Text,
+    pub res: Nullable<Integer>,
+    pub url: Text,
+    pub merge_sha: Text,
 }
 
-#[derive(Queryable)]
-pub struct mergeable {
-    repo: Text,
-    num: Integer,
-    // in diesel colum cannot have same name as table
-    col_mergeable: Integer,
+/// One row in `mergeable` table
+#[derive(sqlx::FromRow)]
+pub struct Mergeable {
+    pub repo: Text,
+    pub num: Integer,
+    pub mergeable: Integer,
 }
 
-#[derive(Queryable, Insertable)]
-pub struct repos {
-    repo: Text,
-    treeclosed: Integer,
-    treeclosed_src: Nullable<Text>,
+/// One row in `repos` table
+#[derive(sqlx::FromRow)]
+pub struct Repo {
+    pub repo: Text,
+    pub treeclosed: Integer,
+    pub treeclosed_src: Nullable<Text>,
 }
 
-#[derive(Queryable)]
-pub struct retry_log {
-    repo: Text,
-    num: Integer,
-    // TODO: check
-    time: Timestamp,
-    src: Text,
-    msg: Text,
+/// One row in `retry_log` table
+#[derive(sqlx::FromRow)]
+pub struct RetryLog {
+    pub repo: Text,
+    pub num: Integer,
+    pub time: DateTime,
+    pub src: Text,
+    pub msg: Text,
 }

@@ -7,22 +7,26 @@ description = "A bot that integrates with GitHub and your favorite continuous in
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# Read TOML config files
-serde = { version = "1.0", features = ["derive"] }
+# Read config files
+serde = { version = "1", features = ["derive"] }
 toml = "0.5"
-serde_json = "1.0"
+serde_json = "1"
 # GitHub api
 octocrab = "0.17"
 # SQLite
-#rusqlite = { version = "0.28", features = ["bundled"] }
-diesel = { version = "2", default-features = false, features = ["sqlite"] }
+sqlx = { version = "0.6", features = [ "runtime-tokio-rustls", "sqlite", "time" ] }
+time = "0.3"
 # ASYNC runner
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["full"] }
 # cli
 clap = { version = "3.2", features = ["cargo"] }
 # logging
 env_logger = "0.9"
 log = "0.4"
-#once_cell = "1"
-regex = "1.6"
+regex = "1"
 once_cell = "1"
+
+# Server
+[dependencies.tera]
+version = "1.3.1"
+default-features = false
