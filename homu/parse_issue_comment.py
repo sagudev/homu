@@ -57,8 +57,10 @@ class IssueCommentCommand:
         return cls('retry')
 
     @classmethod
-    def try_(cls):
-        return cls('try')
+    def try_(cls, choose=None):
+        command = cls('try')
+        command.choose = choose
+        return command
 
     @classmethod
     def untry(cls):
@@ -232,6 +234,10 @@ def parse_issue_comment(username, body, sha, botname, hooks=[]):
             # Try- is broken, prevent its usage.
             # commands.append(IssueCommentCommand.untry())
             pass
+
+        elif word.startswith('try='):
+            choose = word[len('try='):]
+            commands.append(IssueCommentCommand.try_(choose))
 
         elif word in WORDS_TO_ROLLUP:
             rollup_value = WORDS_TO_ROLLUP[word]

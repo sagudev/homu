@@ -148,6 +148,7 @@ class PullReqState:
     base_ref = ''
     assignee = ''
     delegate = ''
+    try_choose = None
 
     def __init__(self, num, head_sha, status, db, repo_label, mergeable_que,
                  gh, owner, name, label_events, repos, test_on_fork):
@@ -350,7 +351,7 @@ class PullReqState:
     def save(self):
         db_query(
             self.db,
-            'INSERT OR REPLACE INTO pull (repo, num, status, merge_sha, title, body, head_sha, head_ref, base_ref, assignee, approved_by, priority, try_, rollup, squash, delegate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',  # noqa
+            'INSERT OR REPLACE INTO pull (repo, num, status, merge_sha, title, body, head_sha, head_ref, base_ref, assignee, approved_by, priority, try_, try_choose, rollup, squash, delegate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',  # noqa
             [
                 self.repo_label,
                 self.num,
@@ -365,6 +366,7 @@ class PullReqState:
                 self.approved_by,
                 self.priority,
                 self.try_,
+                self.try_choose,
                 self.rollup,
                 self.squash,
                 self.delegate,
@@ -590,6 +592,7 @@ def parse_commands(body, username, user_id, repo_label, repo_cfg, state,
             if sha_cmp(cur_sha, state.head_sha):
                 state.approved_by = approver
                 state.try_ = False
+                state.try_choose = None
                 state.set_status('')
 
                 state.save()
@@ -707,7 +710,29 @@ def parse_commands(body, username, user_id, repo_label, repo_cfg, state,
                 )
                 continue
 
-            state.try_ = command.action == 'try'
+            is_try = command.action == 'try'
+            state.try_choose = None
+            if command.choose and is_try:
+                try_choosers = list(repo_cfg.get('try_choosers', []))
+                if 'buildbot' in repo_cfg:
+                    try_choosers += list(
+                        repo_cfg['buildbot']['try_choosers'].keys()
+                    )
+                if try_choosers:
+                    if command.choose in try_choosers:
+                        state.try_choose = command.choose
+                    elif realtime:
+                        state.add_comment(
+                            ':slightly_frowning_face: There is no try chooser {} for this repo, try one of: {}'  # noqa
+                            .format(command.choose, ", ".join(try_choosers))
+                        )
+                        return
+                else:
+                    if realtime:
+                        state.add_comment(
+                            ':slightly_frowning_face: This repo does not have try choosers set up'  # noqa
+                        )
+            state.try_ = is_try
 
             state.merge_sha = ''
             state.init_build_res([])
@@ -1304,14 +1329,25 @@ def start_build(state, repo_cfgs, buildbot_slots, logger, db, git_cfg):
     repo_cfg = repo_cfgs[state.repo_label]
 
     builders = []
-    branch = 'try' if state.try_ else 'auto'
+    branch = 'auto'
+    if state.try_:
+        if state.try_choose:
+            branch = "try-%s" % state.try_choose
+        else:
+            branch = "try"
     branch = repo_cfg.get('branch', {}).get(branch, branch)
     can_try_travis_exemption = False
 
     only_status_builders = True
     if 'buildbot' in repo_cfg:
         if state.try_:
-            builders += repo_cfg['buildbot']['try_builders']
+            if state.try_choose:
+                builders += (
+                    repo_cfg['buildbot']['try_choosers']
+                    .get(state.try_choose, [])
+                )
+            else:
+                builders += repo_cfg['buildbot']['try_builders']
         else:
             builders += repo_cfg['buildbot']['builders']
         only_status_builders = False
@@ -1776,6 +1812,7 @@ def main():
         approved_by TEXT,
         priority INTEGER,
         try_ INTEGER,
+        try_choose TEXT,
         rollup INTEGER,
         squash INTEGER,
         delegate TEXT,
@@ -1843,9 +1880,9 @@ def main():
 
         db_query(
             db,
-            'SELECT num, head_sha, status, title, body, head_ref, base_ref, assignee, approved_by, priority, try_, rollup, squash, delegate, merge_sha FROM pull WHERE repo = ?',   # noqa
+            'SELECT num, head_sha, status, title, body, head_ref, base_ref, assignee, approved_by, priority, try_, try_choose, rollup, squash, delegate, merge_sha FROM pull WHERE repo = ?',   # noqa
             [repo_label])
-        for num, head_sha, status, title, body, head_ref, base_ref, assignee, approved_by, priority, try_, rollup, squash, delegate, merge_sha in db.fetchall():  # noqa
+        for num, head_sha, status, title, body, head_ref, base_ref, assignee, approved_by, priority, try_, try_choose, rollup, squash, delegate, merge_sha in db.fetchall():  # noqa
             state = PullReqState(num, head_sha, status, db, repo_label, mergeable_que, gh, repo_cfg['owner'], repo_cfg['name'], repo_cfg.get('labels', {}), repos, repo_cfg.get('test-on-fork'))  # noqa
             state.title = title
             state.body = body
@@ -1856,6 +1893,7 @@ def main():
             state.approved_by = approved_by
             state.priority = int(priority)
             state.try_ = bool(try_)
+            state.try_choose = try_choose
             state.rollup = rollup
             state.squash = bool(squash)
             state.delegate = delegate
